@@ -3,12 +3,13 @@ import azure.functions as func
 import json, requests, time, os, logging, re
 import openai
 from time import sleep
-#from http.client import HTTPConnection
+from http.client import HTTPConnection
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Python HTTP trigger function processed a request.')
     try:
         body = json.dumps(req.get_json())
+        print(body)
     except ValueError:
         return func.HttpResponse(
              "Invalid body",
@@ -74,26 +75,23 @@ def transform_value(value):
 
 # Function to submit the analysis job towards the Text Analytics (TA) API
 def get_aoai_result (value):
-    ## Debug logging, useful if you struggle with the body sent to the endpoint. Uncomment from http.client too 
-    #log = logging.getLogger('urllib3')
-    #log.setLevel(logging.DEBUG)    
-    # logging from urllib3 to console
-    #ch = logging.StreamHandler()
-    #ch.setLevel(logging.DEBUG)
-    #log.addHandler(ch)
-    ##print statements from `http.client.HTTPConnection` to console/stdout
-    #HTTPConnection.debuglevel = 1 
+    # # Debug logging, useful if you struggle with the body sent to the endpoint. Uncomment from http.client too 
+    # log = logging.getLogger('urllib3')
+    # log.setLevel(logging.DEBUG)    
+    # # logging from urllib3 to console
+    # ch = logging.StreamHandler()
+    # ch.setLevel(logging.DEBUG)
+    # log.addHandler(ch)
+    # # print statements from `http.client.HTTPConnection` to console/stdout
+    # HTTPConnection.debuglevel = 1 
     
     openai.api_key = os.environ["openai.api_key"]
     openai.api_base = os.environ["openai.api_base"]
     openai.api_version = os.environ["openai.api_version"]
     openai.api_type = os.environ["openai.api_type"]
 
-    #Based on your use case you can change the prompt to let GPT-3 understand your intent, similarly with the engine to find the best suited model
-    prompt = 'Summarize the following document:                    SUMMARY ---'
-    engine = 'text-davinci-002'
     corpus = str(value['data']['text'])
-
+    engine = 'text-davinci-002'
 
     temp=0.5
     max_tokens = 150
@@ -101,18 +99,18 @@ def get_aoai_result (value):
     freq_pen=0.25
     pres_pen=0.0
     stop=['<<END>>']
+
     max_retry = 3
     retry = 0
+    # We need to chunk corpus string into equally sized chunks of 6000 characters. In OpenAI 1 token ~= 4 chars. Max token for davinci is ~4k tokens, other models have a 2k limit
+    chunks = [corpus[i:i+6000] for i in range(0, len(corpus), 6000)]
+    finalsummary = ''
+    # loop through the chunks until over
 
-    #if corpus length is longer than 11000 characters we trim it, future improvement would be to split it into multiple requests
-    if len(corpus) > 11000:
-        corpus1 = corpus[:11000]
-    else:
-        corpus1 = corpus
-    prompt = prompt.replace('SUMMARY', corpus1).encode(encoding='ASCII',errors='ignore').decode()
-    while True:
+    for chunk in chunks:
+        prompt = 'Summarize the following document:                    SUMMARY ---'      
+        prompt = prompt.replace('SUMMARY', chunk).encode(encoding='ASCII',errors='ignore').decode()
         try:
-            sleep(1) # to avoid hitting a potential rate limit
             response = openai.Completion.create(
                 engine=engine,
                 prompt=prompt,
@@ -124,10 +122,11 @@ def get_aoai_result (value):
                 stop=stop)
             text = response['choices'][0]['text'].strip()
             text = re.sub('\s+', ' ', text)
-            return text
+            finalsummary = finalsummary + text
         except Exception as oops:
             retry += 1
             if retry >= max_retry:
                 return "GPT3 error: %s" % oops
             print('Error communicating with OpenAI:', oops)
             sleep(1)
+    return finalsummary
